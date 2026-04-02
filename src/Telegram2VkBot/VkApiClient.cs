@@ -157,9 +157,10 @@ public sealed class VkApiClient : IDisposable
         IReadOnlyCollection<Photo> saved;
         try
         {
+            // Для стены сообщества указываем только group_id. user_id=0 VkNet добавил бы в запрос и VK отклоняет такую связку.
             saved = await _api.Photo.SaveWallPhotoAsync(
                     response: result,
-                    userId: 0,
+                    userId: null,
                     groupId: groupIdUlong,
                     caption: null,
                     token: ct)
