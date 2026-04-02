@@ -107,6 +107,14 @@ public sealed class ForwardWorker : BackgroundService
             return;
         }
 
+        _logger.LogInformation(
+            "VK wall.post (new): TelegramMessageId={TelegramMessageId}, owner_id={OwnerId}, textLen={TextLen}, textPreview={TextPreview}, attachments={Attachments}",
+            telegramMessageId,
+            ownerId,
+            (text ?? string.Empty).Length,
+            TruncateForLog(text, 200),
+            attachments ?? "(none)");
+
         var postId = await _vkApi.WallPostAsync(ownerId, text ?? string.Empty, attachments, ct);
         await _repo.UpsertAsync(
             telegramChatId: _telegram.ChannelId,
@@ -145,6 +153,14 @@ public sealed class ForwardWorker : BackgroundService
             if (string.IsNullOrWhiteSpace(messageToSend) && string.IsNullOrWhiteSpace(attachmentsToSend))
                 return;
 
+            _logger.LogInformation(
+                "VK wall.post (after edit, no mapping): TelegramMessageId={TelegramMessageId}, owner_id={OwnerId}, textLen={TextLen}, textPreview={TextPreview}, attachments={Attachments}",
+                telegramMessageId,
+                ownerId,
+                (messageToSend ?? string.Empty).Length,
+                TruncateForLog(messageToSend, 200),
+                attachmentsToSend ?? "(none)");
+
             var newPostId = await _vkApi.WallPostAsync(ownerId, messageToSend ?? string.Empty, attachmentsToSend, ct);
             await _repo.UpsertAsync(_telegram.ChannelId, telegramMessageId, ownerId, newPostId, messageToSend, attachmentsToSend, ct);
             return;
@@ -154,6 +170,15 @@ public sealed class ForwardWorker : BackgroundService
         if (attachmentsToSend == null) attachmentsToSend = existing.Value.VkAttachments;
 
         var messageToSendFinal = messageToSend ?? string.Empty;
+
+        _logger.LogInformation(
+            "VK wall.edit: TelegramMessageId={TelegramMessageId}, owner_id={OwnerId}, post_id={PostId}, textLen={TextLen}, textPreview={TextPreview}, attachments={Attachments}",
+            telegramMessageId,
+            existing.Value.VkOwnerId,
+            existing.Value.VkPostId,
+            messageToSendFinal.Length,
+            TruncateForLog(messageToSendFinal, 200),
+            attachmentsToSend ?? "(none)");
 
         await _vkApi.WallEditAsync(existing.Value.VkOwnerId, existing.Value.VkPostId, messageToSendFinal, attachmentsToSend, ct);
         await _repo.UpsertAsync(_telegram.ChannelId, telegramMessageId, existing.Value.VkOwnerId, existing.Value.VkPostId, messageToSendFinal, attachmentsToSend, ct);
@@ -193,6 +218,15 @@ public sealed class ForwardWorker : BackgroundService
     {
         // Логирование делаем в Worker через исключения, но чтобы не терять ошибки polling'а — просто возвращаем CompletedTask.
         return Task.CompletedTask;
+    }
+
+    private static string TruncateForLog(string? text, int maxLen)
+    {
+        if (string.IsNullOrEmpty(text))
+            return "";
+        if (text.Length <= maxLen)
+            return text;
+        return string.Concat(text.AsSpan(0, maxLen), "…(len=", text.Length.ToString(), ")");
     }
 }
 

@@ -1,4 +1,5 @@
 using System.Net.Http.Headers;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 
@@ -7,6 +8,8 @@ namespace Telegram2VkBot;
 public sealed class VkApiClient
 {
     private const string VkApiBaseUrl = "https://api.vk.com/method/";
+    private const int LogParamMaxLength = 240;
+    private const int LogBodyMaxLength = 8192;
 
     private readonly VkOptions _options;
     private readonly HttpClient _http;
@@ -92,8 +95,18 @@ public sealed class VkApiClient
         byteContent.Headers.ContentType = new MediaTypeHeaderValue("image/jpeg");
         form.Add(byteContent, "photo", "photo.jpg");
 
+        _logger.LogInformation(
+            "VK upload → POST multipart (photo.jpg, {Size} bytes) to {UploadUrl}",
+            photoBytes.Length,
+            TruncateForLog(uploadUrl, 512));
+
         using var uploadResp = await _http.PostAsync(uploadUrl, form, ct);
         var uploadRespText = await uploadResp.Content.ReadAsStringAsync(ct);
+        _logger.LogInformation(
+            "VK upload ← HTTP {StatusCode}, body: {Body}",
+            (int)uploadResp.StatusCode,
+            TruncateForLog(uploadRespText, LogBodyMaxLength));
+
         if (!uploadResp.IsSuccessStatusCode)
         {
             _logger.LogWarning("VK upload failed: {StatusCode} {Body}", uploadResp.StatusCode, uploadRespText);
@@ -142,12 +155,30 @@ public sealed class VkApiClient
             ["v"] = _options.ApiVersion,
         };
 
+        var requestUrl = VkApiBaseUrl + method;
+        _logger.LogInformation(
+            "VK API → POST {Url}, form: {Form}",
+            requestUrl,
+            FormatFormForLog(query));
+
         using var content = new FormUrlEncodedContent(query);
-        using var resp = await _http.PostAsync(VkApiBaseUrl + method, content, ct);
+        using var resp = await _http.PostAsync(requestUrl, content, ct);
         var body = await resp.Content.ReadAsStringAsync(ct);
+        var bodyForLog = TruncateForLog(body, LogBodyMaxLength);
+
+        _logger.LogInformation(
+            "VK API ← {Method}: HTTP {StatusCode}, body: {Body}",
+            method,
+            (int)resp.StatusCode,
+            bodyForLog);
 
         if (!resp.IsSuccessStatusCode)
         {
+            _logger.LogError(
+                "VK API HTTP error for {Method}: {StatusCode}, body: {Body}",
+                method,
+                (int)resp.StatusCode,
+                bodyForLog);
             throw new InvalidOperationException($"VK API HTTP error: {(int)resp.StatusCode} {body}");
         }
 
@@ -158,6 +189,10 @@ public sealed class VkApiClient
         {
             var message = error.TryGetProperty("error_msg", out var em) ? em.GetString() : null;
             var code = error.TryGetProperty("error_code", out var ec) ? ec.ToString() : null;
+            _logger.LogError(
+                "VK API error body for {Method}: {Body}",
+                method,
+                bodyForLog);
             throw new InvalidOperationException($"VK API error: code={code} msg={message}");
         }
 
@@ -166,8 +201,50 @@ public sealed class VkApiClient
             throw new InvalidOperationException($"VK API unexpected response: {body}");
         }
 
+        var responsePayload = response.GetRawText();
+        _logger.LogDebug("VK API response.extracted for {Method}: {Payload}", method, TruncateForLog(responsePayload, LogBodyMaxLength));
+
         // Return detached element by cloning to avoid disposing doc
-        return JsonDocument.Parse(response.GetRawText()).RootElement.Clone();
+        return JsonDocument.Parse(responsePayload).RootElement.Clone();
+    }
+
+    private string FormatFormForLog(IReadOnlyDictionary<string, string> form)
+    {
+        var sb = new StringBuilder(capacity: Math.Min(512, form.Count * 32));
+        var first = true;
+        foreach (var (key, value) in form.OrderBy(static kv => kv.Key, StringComparer.Ordinal))
+        {
+            if (!first)
+                sb.Append("; ");
+            first = false;
+            sb.Append(key);
+            sb.Append('=');
+            sb.Append(key.Equals("access_token", StringComparison.OrdinalIgnoreCase)
+                ? "***"
+                : SanitizeParamForLog(key, value));
+        }
+
+        return sb.ToString();
+    }
+
+    private string SanitizeParamForLog(string key, string value)
+    {
+        if (value.Length <= LogParamMaxLength)
+            return value;
+
+        // VK передаёт поле photo как длинную строка; message тоже может быть огромным.
+        var previewLen = Math.Min(120, LogParamMaxLength);
+        var head = value[..previewLen];
+        return $"{head}…(truncated, len={value.Length}, key={key})";
+    }
+
+    private static string TruncateForLog(string? text, int maxLen)
+    {
+        if (string.IsNullOrEmpty(text))
+            return "";
+        if (text.Length <= maxLen)
+            return text;
+        return string.Concat(text.AsSpan(0, maxLen), "…(truncated, totalLen=", text.Length.ToString(), ")");
     }
 }
 
