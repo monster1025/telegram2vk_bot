@@ -75,6 +75,34 @@ LIMIT 1;";
         return null;
     }
 
+    /// <summary>Все telegram message_id, привязанные к одному посту ВК (альбом).</summary>
+    public async Task<IReadOnlyList<int>> GetTelegramMessageIdsForVkPostAsync(
+        long telegramChatId,
+        int vkPostId,
+        CancellationToken ct)
+    {
+        await using var con = new SqliteConnection(ConnectionString);
+        await con.OpenAsync(ct);
+
+        var sql = @"
+SELECT telegram_message_id
+FROM vk_mappings
+WHERE telegram_chat_id = $telegram_chat_id AND vk_post_id = $vk_post_id
+ORDER BY telegram_message_id;";
+
+        await using var cmd = con.CreateCommand();
+        cmd.CommandText = sql;
+        cmd.Parameters.AddWithValue("$telegram_chat_id", telegramChatId);
+        cmd.Parameters.AddWithValue("$vk_post_id", vkPostId);
+
+        var ids = new List<int>();
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        while (await reader.ReadAsync(ct))
+            ids.Add(reader.GetInt32(0));
+
+        return ids;
+    }
+
     public async Task UpsertAsync(
         long telegramChatId,
         int telegramMessageId,
