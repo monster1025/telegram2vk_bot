@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Net.Http.Headers;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.Options;
 using VkNet;
@@ -11,7 +12,7 @@ namespace Telegram2VkBot;
 public sealed class VkApiClient : IDisposable
 {
     public const string UploadHttpClientName = "VkUpload";
-    private const int LogParamMaxLength = 240;
+    private const string VkApiBaseUrl = "https://api.vk.com/method/";
     private const int LogBodyMaxLength = 8192;
     private const string MultipartBoundary = "-------0988";
 
@@ -154,34 +155,103 @@ public sealed class VkApiClient : IDisposable
             return null;
         }
 
-        IReadOnlyCollection<Photo> saved;
-        try
-        {
-            // Для стены сообщества указываем только group_id. user_id=0 VkNet добавил бы в запрос и VK отклоняет такую связку.
-            saved = await _api.Photo.SaveWallPhotoAsync(
-                    response: result,
-                    userId: null,
-                    groupId: groupIdUlong,
-                    caption: null,
-                    token: ct)
-                .ConfigureAwait(false);
-        }
-        catch (VkApiException ex)
-        {
-            _logger.LogError(ex, "VkNet Photo.SaveWallPhotoAsync failed (VK code {ErrorCode}): {Message}", ex.ErrorCode, ex.Message);
-            throw;
-        }
-
-        var photo = saved.FirstOrDefault();
-        if (photo == null)
-        {
-            _logger.LogWarning("VkNet SaveWallPhoto: пустой результат");
+        // VkNet иногда «висит» на SaveWallPhoto (внутренний RestClient). Тот же запрос через наш HttpClient с таймаутом.
+        var (ownerId, photoId) = await SaveWallPhotoHttpAsync(result, groupIdUlong, ct).ConfigureAwait(false);
+        if (ownerId == null || photoId == null)
             return null;
+
+        var attachment = $"photo{ownerId.Value}_{photoId.Value}";
+        _logger.LogInformation("photos.saveWallPhoto → вложение: {Attachment}", attachment);
+        return attachment;
+    }
+
+    /// <summary>
+    /// Прямой вызов photos.saveWallPhoto (без VkNet): корректно передаёт длинное поле photo из ответа upload-сервера.
+    /// </summary>
+    private async Task<(long? OwnerId, long? Id)> SaveWallPhotoHttpAsync(
+        string uploadResponseJson,
+        ulong groupId,
+        CancellationToken ct)
+    {
+        using var uploadDoc = JsonDocument.Parse(uploadResponseJson);
+        var root = uploadDoc.RootElement;
+
+        if (!root.TryGetProperty("server", out var serverEl) || !root.TryGetProperty("hash", out var hashEl))
+        {
+            _logger.LogWarning("Ответ upload-сервера без server/hash");
+            return (null, null);
         }
 
-        var attachment = $"photo{photo.OwnerId}_{photo.Id}";
-        _logger.LogInformation("VkNet SaveWallPhoto response: {Attachment}", attachment);
-        return attachment;
+        if (!root.TryGetProperty("photo", out var photoEl))
+        {
+            _logger.LogWarning("Ответ upload-сервера без photo");
+            return (null, null);
+        }
+
+        var server = serverEl.ValueKind == JsonValueKind.Number
+            ? serverEl.GetInt64().ToString(CultureInfo.InvariantCulture)
+            : serverEl.GetString() ?? "";
+
+        var hash = hashEl.ValueKind == JsonValueKind.String
+            ? hashEl.GetString() ?? ""
+            : hashEl.GetRawText();
+
+        var photoParam = photoEl.ValueKind == JsonValueKind.String
+            ? photoEl.GetString() ?? ""
+            : photoEl.GetRawText();
+
+        _logger.LogInformation(
+            "photos.saveWallPhoto → group_id={GroupId}, server={Server}, photoLen={PhotoLen}, hashLen={HashLen}",
+            groupId,
+            server,
+            photoParam.Length,
+            hash.Length);
+
+        var query = new Dictionary<string, string>
+        {
+            ["access_token"] = _options.AccessToken,
+            ["v"] = _options.ApiVersion,
+            ["group_id"] = groupId.ToString(CultureInfo.InvariantCulture),
+            ["server"] = server,
+            ["photo"] = photoParam,
+            ["hash"] = hash,
+        };
+
+        using var content = new FormUrlEncodedContent(query);
+        var http = _httpFactory.CreateClient(UploadHttpClientName);
+        using var resp = await http
+            .PostAsync(VkApiBaseUrl + "photos.saveWallPhoto", content, ct)
+            .ConfigureAwait(false);
+        var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+
+        _logger.LogInformation(
+            "photos.saveWallPhoto ← HTTP {StatusCode}, body: {Body}",
+            (int)resp.StatusCode,
+            TruncateForLog(body, LogBodyMaxLength));
+
+        if (!resp.IsSuccessStatusCode)
+            throw new InvalidOperationException($"photos.saveWallPhoto HTTP: {(int)resp.StatusCode} {TruncateForLog(body, 2000)}");
+
+        using var outDoc = JsonDocument.Parse(body);
+        var outRoot = outDoc.RootElement;
+
+        if (outRoot.TryGetProperty("error", out var err))
+        {
+            var code = err.TryGetProperty("error_code", out var ec) ? ec.GetInt32().ToString(CultureInfo.InvariantCulture) : "?";
+            var msg = err.TryGetProperty("error_msg", out var em) ? em.GetString() : null;
+            throw new InvalidOperationException($"photos.saveWallPhoto VK error: code={code} msg={msg}");
+        }
+
+        if (!outRoot.TryGetProperty("response", out var response) || response.ValueKind != JsonValueKind.Array || response.GetArrayLength() == 0)
+        {
+            _logger.LogWarning("photos.saveWallPhoto: пустой или неожиданный response");
+            return (null, null);
+        }
+
+        var first = response[0];
+        var oid = first.GetProperty("owner_id").GetInt64();
+        var pid = first.GetProperty("id").GetInt64();
+        return (oid, pid);
     }
 
     private static readonly Regex PhotoAttachmentRegex = new(@"^photo(-?\d+)_(\d+)$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
