@@ -17,7 +17,6 @@ public sealed class ForwardWorker : BackgroundService
     public ForwardWorker(
         IOptions<TelegramOptions> telegram,
         IOptions<VkOptions> vk,
-        IOptions<DbOptions> db,
         VkApiClient vkApi,
         MappingRepository repo,
         ILogger<ForwardWorker> logger)
@@ -32,13 +31,13 @@ public sealed class ForwardWorker : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         if (string.IsNullOrWhiteSpace(_telegram.BotToken))
-            throw new ArgumentException("TELEGRAM__BOT_TOKEN is empty");
+            throw new ArgumentException("TELEGRAM__BotToken (или TELEGRAM:BotToken) пуст — проверьте .env / переменные окружения.");
         if (_telegram.ChannelId == 0)
-            throw new ArgumentException("TELEGRAM__CHANNEL_ID must be non-zero (example: -1001234567890)");
+            throw new ArgumentException("TELEGRAM__ChannelId должен быть ненулевым (пример: -1001234567890).");
         if (string.IsNullOrWhiteSpace(_vk.AccessToken))
-            throw new ArgumentException("VK__ACCESS_TOKEN is empty");
+            throw new ArgumentException("VK__AccessToken пуст — проверьте .env / переменные окружения.");
         if (_vk.GroupId == 0)
-            throw new ArgumentException("VK__GROUP_ID must be non-zero (community id without minus)");
+            throw new ArgumentException("VK__GroupId должен быть ненулевым (id сообщества без минуса).");
 
         _logger.LogInformation("Init database");
         await _repo.InitializeAsync(stoppingToken);

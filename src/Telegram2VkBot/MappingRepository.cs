@@ -1,4 +1,5 @@
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Options;
 
 namespace Telegram2VkBot;
 
@@ -7,9 +8,9 @@ public sealed class MappingRepository
     private readonly DbOptions _dbOptions;
     private readonly ILogger<MappingRepository> _logger;
 
-    public MappingRepository(DbOptions dbOptions, ILogger<MappingRepository> logger)
+    public MappingRepository(IOptions<DbOptions> dbOptions, ILogger<MappingRepository> logger)
     {
-        _dbOptions = dbOptions;
+        _dbOptions = dbOptions.Value;
         _logger = logger;
     }
 

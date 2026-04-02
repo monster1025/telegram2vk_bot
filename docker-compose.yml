@@ -7,12 +7,14 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-    #  TELEGRAM__BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
-    #  TELEGRAM__CHANNEL_ID: ${TELEGRAM_CHANNEL_ID}
-    #  VK__ACCESS_TOKEN: ${VK_ACCESS_TOKEN}
-    #  VK__GROUP_ID: ${VK_GROUP_ID}
-    #  VK__API_VERSION: ${VK_API_VERSION:-5.199}
-      DB__PATH: /data/mapping.sqlite
+      # Имена ключей должны совпадать с свойствами Options (BotToken, ChannelId, ...),
+      # иначе TELEGRAM__BOT_TOKEN попадёт в конфиг как BOT_TOKEN и не забиндится.
+      TELEGRAM__BotToken: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM__ChannelId: ${TELEGRAM_CHANNEL_ID}
+      VK__AccessToken: ${VK_ACCESS_TOKEN}
+      VK__GroupId: ${VK_GROUP_ID}
+      VK__ApiVersion: ${VK_API_VERSION:-5.199}
+      DB__Path: /data/mapping.sqlite
     volumes:
       - ./data:/data
 
