@@ -15,6 +15,15 @@ services:
       #VK__GroupId: ${VK_GROUP_ID}
       #VK__ApiVersion: ${VK_API_VERSION:-5.199}
       DB__Path: /data/mapping.sqlite
+      ASPNETCORE_URLS: http://+:8080
+    ports:
+      - "8080:8080"
     volumes:
       - ./data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/health >/dev/null || exit 1"]
+      interval: 30s
+      timeout: 12s
+      retries: 3
+      start_period: 45s
 
