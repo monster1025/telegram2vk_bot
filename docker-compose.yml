@@ -1,0 +1,16 @@
+services:
+  telegram2vk:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      TELEGRAM__BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM__CHANNEL_ID: ${TELEGRAM_CHANNEL_ID}
+      VK__ACCESS_TOKEN: ${VK_ACCESS_TOKEN}
+      VK__GROUP_ID: ${VK_GROUP_ID}
+      VK__API_VERSION: ${VK_API_VERSION:-5.199}
+      DB__PATH: /data/mapping.sqlite
+    volumes:
+      - ./data:/data
+
