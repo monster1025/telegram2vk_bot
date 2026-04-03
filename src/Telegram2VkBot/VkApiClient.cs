@@ -14,7 +14,6 @@ public sealed class VkApiClient : IDisposable
     public const string UploadHttpClientName = "VkUpload";
     private const string VkApiBaseUrl = "https://api.vk.com/method/";
     private const int LogBodyMaxLength = 8192;
-    private const string MultipartBoundary = "-------0988";
 
     private readonly VkOptions _options;
     private readonly IHttpClientFactory _httpFactory;
@@ -135,10 +134,12 @@ public sealed class VkApiClient : IDisposable
             photoBytes.Length,
             TruncateForLog(uploadUrl, 512));
 
-        using var form = new MultipartFormDataContent(MultipartBoundary);
+        // Не задавать свою boundary: нестандартная строка (например «-------0988») часто ломает разбор
+        // multipart на стороне VK → в ответе photo остаётся пустым.
+        using var form = new MultipartFormDataContent();
         var bytes = new ByteArrayContent(photoBytes);
         bytes.Headers.ContentType = new MediaTypeHeaderValue("image/jpeg");
-        form.Add(bytes, "photo", $"{Guid.NewGuid():N}.jpg");
+        form.Add(bytes, "photo", "photo.jpg");
 
         var http = _httpFactory.CreateClient(UploadHttpClientName);
         using var uploadResp = await http.PostAsync(uploadUrl, form, ct).ConfigureAwait(false);
@@ -199,6 +200,13 @@ public sealed class VkApiClient : IDisposable
         var photoParam = photoEl.ValueKind == JsonValueKind.String
             ? photoEl.GetString() ?? ""
             : photoEl.GetRawText();
+
+        if (string.IsNullOrEmpty(photoParam))
+        {
+            _logger.LogWarning(
+                "Ответ upload-сервера: photo пуст — файл не распознан (multipart). Проверьте загрузку на upload_url.");
+            return (null, null);
+        }
 
         _logger.LogInformation(
             "photos.saveWallPhoto → group_id={GroupId}, server={Server}, photoLen={PhotoLen}, hashLen={HashLen}",
