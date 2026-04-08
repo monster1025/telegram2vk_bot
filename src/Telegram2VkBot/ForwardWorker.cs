@@ -24,6 +24,7 @@ public sealed class ForwardWorker : BackgroundService
     private readonly ConcurrentDictionary<(long ChatId, string MediaGroupId), AlbumBuffer> _albumBuffers = new();
 
     private CancellationToken _appStopping;
+    private TelegramBotClient _bot;
 
     public ForwardWorker(
         IOptions<TelegramOptions> telegram,
@@ -57,7 +58,7 @@ public sealed class ForwardWorker : BackgroundService
         _logger.LogInformation("Init database");
         await _repo.InitializeAsync(stoppingToken);
 
-        var bot = new TelegramBotClient(_telegram.BotToken);
+        _bot = new TelegramBotClient(_telegram.BotToken);
         var receiverOptions = new ReceiverOptions
         {
             AllowedUpdates = new[]
@@ -69,13 +70,13 @@ public sealed class ForwardWorker : BackgroundService
 
         _logger.LogInformation("Start Telegram polling for channel {ChannelId}", _telegram.ChannelId);
 
-        bot.StartReceiving(
+        _bot.StartReceiving(
             async (client, update, ct) =>
             {
                 await _updateGate.WaitAsync(ct);
                 try
                 {
-                    await HandleUpdateAsync(update, bot, ct);
+                    await HandleUpdateAsync(update, _bot, ct);
                 }
                 finally
                 {
@@ -288,54 +289,20 @@ public sealed class ForwardWorker : BackgroundService
 
     private async Task TryAddTelegramReactionAfterRepostAsync(long chatId, int messageId, CancellationToken ct)
     {
-        if (!_telegram.AddReactionAfterRepost)
-            return;
-
-        var emoji = _telegram.RepostReactionEmoji;
-        if (string.IsNullOrWhiteSpace(emoji))
-            return;
-
-        // Делаем прямой вызов Bot API, чтобы не зависеть от наличия метода в конкретной версии Telegram.Bot.
-        // https://core.telegram.org/bots/api#setmessagereaction
-        var url = $"https://api.telegram.org/bot{_telegram.BotToken}/setMessageReaction";
-
-        var payload = new
-        {
-            chat_id = chatId,
-            message_id = messageId,
-            reaction = new object[]
-            {
-                new { type = "emoji", emoji }
-            },
-            is_big = _telegram.RepostReactionIsBig
-        };
-
-        var json = JsonSerializer.Serialize(payload);
-        using var content = new StringContent(json, Encoding.UTF8, "application/json");
-
         try
         {
-            var http = _httpFactory.CreateClient(TelegramBotApiHttpClientName);
-            using var resp = await http.PostAsync(url, content, ct).ConfigureAwait(false);
-            var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
-
-            if (!resp.IsSuccessStatusCode)
-            {
-                return;
-            }
-
-            using var doc = JsonDocument.Parse(body);
-            if (!doc.RootElement.TryGetProperty("ok", out var ok) || ok.ValueKind != JsonValueKind.True)
-            {
-                return;
-            }
+            _logger.LogWarning($"Начинаю простановку реакции.");
+            await _bot.SetMessageReaction(chatId, messageId, [new ReactionTypeEmoji() { Emoji = "🦄" }], cancellationToken: ct);
+            _logger.LogWarning($"Реация успешно проставлена.");
         }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        catch (OperationCanceledException ex) when (ct.IsCancellationRequested)
         {
+            _logger.LogWarning($"Ошибка проставноки реакции: {ex.Message}{ex.StackTrace}");
             throw;
         }
-        catch (Exception)
+        catch (Exception ex)
         {
+            _logger.LogWarning($"Ошибка проставноки реакции: {ex.Message}{ex.StackTrace}");
             // intentionally no logging (do not spam logs for tg calls)
         }
     }
