@@ -41,6 +41,14 @@ public static class Program
             options.TimestampFormat = "yyyy-MM-dd HH:mm:ss ";
         });
 
+        // Убираем «шум» от /health и телеграмных healthcheck-запросов.
+        // (Это системные info-логи ASP.NET/HttpClient, не логи нашего кода.)
+        builder.Logging.AddFilter("Microsoft.AspNetCore.Routing.EndpointMiddleware", LogLevel.Warning);
+        builder.Logging.AddFilter("Microsoft.AspNetCore.Hosting.Diagnostics", LogLevel.Warning);
+        builder.Logging.AddFilter("Microsoft.Extensions.Diagnostics.HealthChecks", LogLevel.Warning);
+        builder.Logging.AddFilter("System.Net.Http.HttpClient.TelegramHealth", LogLevel.Warning);
+        builder.Logging.AddFilter("System.Net.Http.HttpClient.TelegramBotApi", LogLevel.Warning);
+
         var app = builder.Build();
 
         app.MapHealthChecks("/health");
