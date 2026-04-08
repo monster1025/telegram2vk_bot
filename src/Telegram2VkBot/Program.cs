@@ -20,6 +20,11 @@ public static class Program
             client.Timeout = TimeSpan.FromSeconds(15);
         });
 
+        builder.Services.AddHttpClient("TelegramBotApi", client =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(15);
+        });
+
         builder.Services.AddSingleton<VkApiClient>();
         builder.Services.AddSingleton<MappingRepository>();
 

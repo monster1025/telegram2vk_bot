@@ -4,6 +4,9 @@ public sealed class TelegramOptions
 {
     public required string BotToken { get; init; }
     public required long ChannelId { get; init; }
+    public bool AddReactionAfterRepost { get; init; } = true;
+    public string RepostReactionEmoji { get; init; } = "🤖";
+    public bool RepostReactionIsBig { get; init; } = false;
 }
 
 public sealed class VkOptions

@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.Text;
+using System.Text.Json;
 using Telegram.Bot;
 using Telegram.Bot.Types;
 using Telegram.Bot.Types.Enums;
@@ -10,11 +12,13 @@ namespace Telegram2VkBot;
 public sealed class ForwardWorker : BackgroundService
 {
     private static readonly TimeSpan AlbumDebounce = TimeSpan.FromMilliseconds(950);
+    public const string TelegramBotApiHttpClientName = "TelegramBotApi";
 
     private readonly TelegramOptions _telegram;
     private readonly VkOptions _vk;
     private readonly VkApiClient _vkApi;
     private readonly MappingRepository _repo;
+    private readonly IHttpClientFactory _httpFactory;
     private readonly ILogger<ForwardWorker> _logger;
     private readonly SemaphoreSlim _updateGate = new(1, 1);
     private readonly ConcurrentDictionary<(long ChatId, string MediaGroupId), AlbumBuffer> _albumBuffers = new();
@@ -26,12 +30,14 @@ public sealed class ForwardWorker : BackgroundService
         IOptions<VkOptions> vk,
         VkApiClient vkApi,
         MappingRepository repo,
+        IHttpClientFactory httpFactory,
         ILogger<ForwardWorker> logger)
     {
         _telegram = telegram.Value;
         _vk = vk.Value;
         _vkApi = vkApi;
         _repo = repo;
+        _httpFactory = httpFactory;
         _logger = logger;
     }
 
@@ -233,6 +239,7 @@ public sealed class ForwardWorker : BackgroundService
             ct);
 
         _logger.LogInformation("Posted new VK post {PostId} for Telegram {MessageId}", postId, telegramMessageId);
+        await TryAddTelegramReactionAfterRepostAsync(message.Chat.Id, telegramMessageId, ct);
     }
 
     private async Task PostChannelMessagesAsSingleVkPostAsync(TelegramBotClient bot, IReadOnlyList<Message> batch, CancellationToken ct)
@@ -274,6 +281,63 @@ public sealed class ForwardWorker : BackgroundService
             postId,
             batch[0].MediaGroupId,
             string.Join(",", batch.Select(m => m.MessageId)));
+
+        // Реакция на «оригинальный пост» альбома: первую (самую раннюю) часть.
+        await TryAddTelegramReactionAfterRepostAsync(batch[0].Chat.Id, batch[0].MessageId, ct);
+    }
+
+    private async Task TryAddTelegramReactionAfterRepostAsync(long chatId, int messageId, CancellationToken ct)
+    {
+        if (!_telegram.AddReactionAfterRepost)
+            return;
+
+        var emoji = _telegram.RepostReactionEmoji;
+        if (string.IsNullOrWhiteSpace(emoji))
+            return;
+
+        // Делаем прямой вызов Bot API, чтобы не зависеть от наличия метода в конкретной версии Telegram.Bot.
+        // https://core.telegram.org/bots/api#setmessagereaction
+        var url = $"https://api.telegram.org/bot{_telegram.BotToken}/setMessageReaction";
+
+        var payload = new
+        {
+            chat_id = chatId,
+            message_id = messageId,
+            reaction = new object[]
+            {
+                new { type = "emoji", emoji }
+            },
+            is_big = _telegram.RepostReactionIsBig
+        };
+
+        var json = JsonSerializer.Serialize(payload);
+        using var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+        try
+        {
+            var http = _httpFactory.CreateClient(TelegramBotApiHttpClientName);
+            using var resp = await http.PostAsync(url, content, ct).ConfigureAwait(false);
+            var body = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+
+            if (!resp.IsSuccessStatusCode)
+            {
+                return;
+            }
+
+            using var doc = JsonDocument.Parse(body);
+            if (!doc.RootElement.TryGetProperty("ok", out var ok) || ok.ValueKind != JsonValueKind.True)
+            {
+                return;
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            // intentionally no logging (do not spam logs for tg calls)
+        }
     }
 
     private async Task HandleChannelPostEditAsync(TelegramBotClient bot, Message editedMessage, CancellationToken ct)
