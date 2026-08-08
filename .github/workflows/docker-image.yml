@@ -1,0 +1,56 @@
+name: Create and publish a Docker image
+
+on:
+  push:
+    branches: [ "master" ]
+
+env:
+  REGISTRY: gitea.yandex5.ru
+  IMAGE_NAME: monster/telegram2vk_bot
+
+jobs:
+  build-and-push-image:
+    runs-on: ubuntu-latest
+    if: ${{ github.server_url != 'https://github.com' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@65b78e6e13532edd9afa3aa52ac7964289d1a9c1
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ vars.REGISTRY_USERNAME }}
+          password: ${{ secrets.REGISTRY_TOKEN }}
+
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@9ec57ed1fcdbf14dcef7dfbe97b2010124a938b7
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@f2a1d5e99d037542a71f64918e516c093c6f3fc4
+        with:
+          context: .
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Install SSH Key
+        uses: shimataro/ssh-key-action@v2
+        with:
+          key: ${{ secrets.SSH_GITEA_PRIVATE_KEY }}
+          known_hosts: 'just-a-placeholder-so-we-dont-get-errors'
+
+      - name: Adding Known Hosts
+        run: ssh-keyscan -p ${{ vars.SSH_PORT }} -H ${{ vars.SSH_HOST }} >> ~/.ssh/known_hosts
+
+      - name: "Deploy to server"
+        run: ssh monster@${{ vars.SSH_HOST }} -p ${{ vars.SSH_PORT }} 'cd docker.services/${{ github.event.repository.name }} && git pull && docker login ${{ env.REGISTRY }} -u ${{ vars.REGISTRY_USERNAME }} --password ${{ secrets.REGISTRY_TOKEN }} && docker compose pull && docker compose build && docker compose up -d && docker system prune --force'
+
+      - name: Send message to Telegram
+        uses: Lukasss93/telegram-action@v2
+        env:
+          TELEGRAM_TOKEN: ${{ vars.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT: 123622180

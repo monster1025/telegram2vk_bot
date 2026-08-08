@@ -4,7 +4,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    restart: unless-stopped
+    image: gitea.yandex5.ru/monster/telegram2vk_bot:master
+    container_name: telegram2vk
+    restart: always
     env_file: .env
     environment:
       # Имена ключей должны совпадать с свойствами Options (BotToken, ChannelId, ...),
@@ -26,4 +28,8 @@ services:
       timeout: 12s
       retries: 3
       start_period: 45s
-
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
