@@ -47,7 +47,7 @@ jobs:
         run: ssh-keyscan -p ${{ vars.SSH_PORT }} -H ${{ vars.SSH_HOST }} >> ~/.ssh/known_hosts
 
       - name: "Deploy to server"
-        run: ssh monster@${{ vars.SSH_HOST }} -p ${{ vars.SSH_PORT }} 'cd docker.services/${{ github.event.repository.name }} && git pull && docker login ${{ env.REGISTRY }} -u ${{ vars.REGISTRY_USERNAME }} --password ${{ secrets.REGISTRY_TOKEN }} && docker compose pull && docker compose build && docker compose up -d && docker system prune --force'
+        run: ssh monster@${{ vars.SSH_HOST }} -p ${{ vars.SSH_PORT }} 'cd docker.services/${{ github.event.repository.name }} && git pull && docker login ${{ env.REGISTRY }} -u ${{ vars.REGISTRY_USERNAME }} --password ${{ secrets.REGISTRY_TOKEN }} && docker compose pull && docker compose up -d && docker system prune --force'
 
       - name: Send message to Telegram
         uses: Lukasss93/telegram-action@v2
